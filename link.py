@@ -1,7 +1,9 @@
+import os
 import requests
 import time
-import webbrowser
-import os
+from flask import Flask, Response
+
+app = Flask(__name__)
 
 # --- [ إعدادات الراشد - نجم الإبداع ] ---
 BASE_URL = "https://waha-latest-r55z.onrender.com"
@@ -9,34 +11,25 @@ API_KEY = "0564b7ccca284292bd555fe8ae91b819"
 HEADERS = {"X-Api-Key": API_KEY, "Content-Type": "application/json"}
 SESSION = "default"
 
-def start_bot_engine():
-    print("🧹 1. تنظيف الجلسات القديمة...")
+@app.route('/')
+def get_qr_now():
+    # 1. تصفير الجلسة القديمة لضمان عدم التعليق
     requests.delete(f"{BASE_URL}/api/sessions/{SESSION}", headers=HEADERS)
-    
-    print("🏗️ 2. إنشاء جلسة جديدة سليمة...")
+    # 2. إنشاء وتشغيل الجلسة فوراً
     requests.post(f"{BASE_URL}/api/sessions", json={"name": SESSION}, headers=HEADERS)
-    
-    print("⚡ 3. تشغيل المحرك (Wake up)...")
     requests.post(f"{BASE_URL}/api/sessions/{SESSION}/start", headers=HEADERS)
     
-    print("⏳ 4. انتظر 20 ثانية لتجهيز الرمز (تلقائياً)...")
-    time.sleep(20)
+    # 3. الانتظار قليلاً لتوليد الكود
+    time.sleep(15)
     
-    print("📸 5. جلب كود الـ QR الآن...")
+    # 4. جلب الصورة وإرسالها للمتصفح مباشرة
     qr_url = f"{BASE_URL}/api/screenshot?session={SESSION}"
-    
-    # محاولة جلب الصورة وحفظها
     res = requests.get(qr_url, headers=HEADERS)
+    
     if res.status_code == 200:
-        with open("whatsapp_qr.png", "wb") as f:
-            f.write(res.content)
-        print("✅ تم! كود الـ QR جاهز في ملف: whatsapp_qr.png")
-        
-        # فتح الصورة تلقائياً في متصفحك أو عارض الصور
-        full_path = os.path.abspath("whatsapp_qr.png")
-        webbrowser.open(f"file://{full_path}")
+        return Response(res.content, mimetype='image/png')
     else:
-        print(f"❌ فشل جلب الكود، الحالة: {res.status_code}. جرب تشغيل الكود مرة أخرى بعد ثوانٍ.")
+        return f"⚠️ الكود جاري التحضير.. حدث الصفحة بعد 5 ثوانٍ. (الحالة: {res.status_code})"
 
 if __name__ == "__main__":
-    start_bot_engine()
+    app.run(host='0.0.0.0', port=int(os.environ.get("PORT", 10000)))
