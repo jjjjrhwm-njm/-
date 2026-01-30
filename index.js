@@ -4,63 +4,60 @@ const { default: makeWASocket, useMultiFileAuthState, DisconnectReason } = requi
 const { GoogleGenerativeAI } = require("@google/generative-ai");
 
 const app = express();
-app.get('/', (req, res) => res.send('Najm Bot: Requesting Code... ✅'));
+app.get('/', (req, res) => res.send('Najm Bot: One-Time Request Mode ✅'));
 app.listen(process.env.PORT || 10000);
 
+// قفل أمان عالمي - لا يتأثر بإعادة تشغيل الدالة
+let hasAttemptedPairing = false;
+
 async function startNajmBot() {
-    // جلسة جديدة تماماً لضمان عدم وجود أخطاء سابقة
-    const { state, saveCreds } = await useMultiFileAuthState('session_najm_recurring');
+    // استخدمنا مجلد جديد لضمان جلسة نظيفة تماماً
+    const { state, saveCreds } = await useMultiFileAuthState('session_one_shot_najm');
     
     const sock = makeWASocket({
         auth: state,
         logger: pino({ level: 'silent' }),
-        browser: ["Ubuntu", "Chrome", "20.0.04"]
+        browser: ["Najm-Bot-Control", "Chrome", "1.0.0"] 
     });
 
     sock.ev.on('creds.update', saveCreds);
 
-    // --- نظام طلب الكود التكراري كل دقيقتين ---
-    let pairingInterval = null;
-
-    if (!sock.authState.creds.registered) {
+    // --- نظام الطلب لمرة واحدة فقط ---
+    if (!sock.authState.creds.registered && !hasAttemptedPairing) {
+        hasAttemptedPairing = true; // تفعيل القفل فوراً
         let phone = process.env.PHONE_NUMBER;
+        
         if (phone) {
             phone = phone.replace(/[^0-9]/g, '');
-            console.log(`\n[نظام النجم] 🔄 سأطلب كوداً جديداً كل دقيقتين للرقم: ${phone}`);
+            console.log(`\n[نظام النجم] 🛡️ جـارٍ طلب كود لمرة واحدة فقط للرقم: ${phone}`);
+            console.log(`[نظام النجم] ⏳ انتظر 15 ثانية لهدوء السيرفر...`);
             
-            // دالة الطلب
-            const requestPairing = async () => {
+            setTimeout(async () => {
                 try {
                     const code = await sock.requestPairingCode(phone);
                     console.log(`\n************************************`);
-                    console.log(`🚀 كود الربط الحالي (صالح لدقيقتين): ${code}`);
-                    console.log(`************************************\n`);
+                    console.log(`🚀 كود الربط الخاص بك: ${code}`);
+                    console.log(`************************************`);
+                    console.log(`⚠️ لن يتم طلب أي كود آخر تلقائياً لسلامة رقمك.\n`);
                 } catch (err) {
-                    console.log(`❌ فشل الطلب (قد يكون بسبب ضغط واتساب): ${err.message}`);
+                    console.log(`❌ فشل طلب الكود: ${err.message}`);
+                    console.log(`💡 نصيحة: إذا ظهر خطأ 429، انتظر 30 دقيقة قبل إعادة التشغيل اليدوي.`);
                 }
-            };
-
-            // تنفيذ الطلب الأول فوراً
-            setTimeout(requestPairing, 10000);
-
-            // تكرار الطلب كل دقيقتين (120000 ميلي ثانية)
-            pairingInterval = setInterval(requestPairing, 120000);
+            }, 15000);
         }
     }
 
     sock.ev.on('connection.update', (update) => {
         const { connection, lastDisconnect } = update;
         if (connection === 'close') {
-            if (pairingInterval) clearInterval(pairingInterval); // توقف عند الفصل
             const shouldReconnect = lastDisconnect.error?.output?.statusCode !== DisconnectReason.loggedOut;
+            // يعيد تشغيل الاتصال لكنه لن يطلب كوداً جديداً بسبب القفل العالمي
             if (shouldReconnect) setTimeout(() => startNajmBot(), 10000);
         } else if (connection === 'open') {
-            console.log('✅ تم الربط بنجاح! سأتوقف عن طلب الأكواد الآن.');
-            if (pairingInterval) clearInterval(pairingInterval); // توقف فور النجاح
+            console.log('✅ تم الربط بنجاح! البوت شغال الآن.');
         }
     });
 
-    // محرك الرد Gemini
     sock.ev.on('messages.upsert', async m => {
         const msg = m.messages[0];
         if (!msg.message || msg.key.fromMe) return;
