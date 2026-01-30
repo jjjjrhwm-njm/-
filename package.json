@@ -1,7 +1,6 @@
 {
   "name": "najm-ai-node",
   "version": "1.0.0",
-  "description": "WhatsApp Bot with Gemini on Render",
   "main": "index.js",
   "scripts": {
     "start": "node index.js"
