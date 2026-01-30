@@ -12,56 +12,59 @@ async function startNajmBot() {
     
     const sock = makeWASocket({
         auth: state,
-        logger: pino({ level: 'silent' }),
+        logger: pino({ level: 'silent' }), // صمت تام للسجلات لترى الكود بوضوح
         browser: ["Ubuntu", "Chrome", "20.0.04"]
     });
 
-    // --- طلب كود الربط بأمان وبدون انهيار ---
-    if (!sock.authState.creds.registered) {
-        let phone = process.env.PHONE_NUMBER;
-        if (phone) {
-            // تنظيف الرقم من أي مسافات أو أصفار زائدة في البداية
-            phone = phone.replace(/[^0-9]/g, ''); 
-            
-            console.log(`جارٍ طلب كود الربط للرقم: ${phone}...`);
-            
-            setTimeout(async () => {
-                try {
-                    let code = await sock.requestPairingCode(phone);
-                    console.log(`\n\n************************************`);
-                    console.log(`🚀 كود الربط الخاص بك هو: ${code}`);
-                    console.log(`************************************\n\n`);
-                } catch (error) {
-                    console.error("فشل طلب الكود، سأحاول مرة أخرى عند إعادة التشغيل:", error.message);
-                }
-            }, 10000); // انتظر 10 ثوانٍ لضمان استقرار الاتصال
-        }
-    }
-
-    const genAI = new GoogleGenerativeAI(process.env.GOOGLE_API_KEY);
-    const model = genAI.getGenerativeModel({ model: "gemini-1.5-flash" });
+    let codeSent = false; // لمنع التكرار والفشل
 
     sock.ev.on('creds.update', saveCreds);
 
-    sock.ev.on('connection.update', (update) => {
-        const { connection, lastDisconnect } = update;
+    sock.ev.on('connection.update', async (update) => {
+        const { connection, lastDisconnect, qr } = update;
+
+        // طلب كود الربط مرة واحدة فقط وبشكل صحيح
+        if (!sock.authState.creds.registered && !codeSent) {
+            codeSent = true; 
+            let phone = process.env.PHONE_NUMBER;
+            if (phone) {
+                phone = phone.replace(/[^0-9]/g, '');
+                console.log(`\n🟡 جارٍ تحضير كود الربط للرقم: ${phone}...`);
+                
+                setTimeout(async () => {
+                    try {
+                        let code = await sock.requestPairingCode(phone);
+                        console.log(`\n************************************`);
+                        console.log(`🚀 كود الربط الجديد هو: ${code}`);
+                        console.log(`************************************\n`);
+                    } catch (error) {
+                        console.log("❌ فشل مؤقت، سيعيد المحاولة بهدوء...");
+                        codeSent = false;
+                    }
+                }, 15000); // انتظار 15 ثانية لضمان استقرار السيرفر
+            }
+        }
+
         if (connection === 'close') {
             const shouldReconnect = lastDisconnect.error?.output?.statusCode !== DisconnectReason.loggedOut;
             if (shouldReconnect) startNajmBot();
         } else if (connection === 'open') {
-            console.log('✅ متصل الآن! جرب إرسال رسالة لواتسابك.');
+            console.log('✅ مبروك! البوت شغال الآن ومتصل.');
         }
     });
 
+    // الجزء الخاص بـ Gemini (الرد الآلي)
     sock.ev.on('messages.upsert', async m => {
         const msg = m.messages[0];
         if (!msg.message || msg.key.fromMe) return;
         const text = msg.message.conversation || msg.message.extendedTextMessage?.text;
         if (text) {
             try {
+                const genAI = new GoogleGenerativeAI(process.env.GOOGLE_API_KEY);
+                const model = genAI.getGenerativeModel({ model: "gemini-1.5-flash" });
                 const result = await model.generateContent(text);
                 await sock.sendMessage(msg.key.remoteJid, { text: result.response.text() });
-            } catch (e) { console.error("Gemini Error:", e.message); }
+            } catch (e) { console.error("Error:", e.message); }
         }
     });
 }
