@@ -4,26 +4,37 @@ const { default: makeWASocket, useMultiFileAuthState, DisconnectReason } = requi
 const { GoogleGenerativeAI } = require("@google/generative-ai");
 
 const app = express();
-app.get('/', (req, res) => res.send('Najm Bot is Online! ✅'));
+app.get('/', (req, res) => res.send('Najm Bot is Stable! ✅'));
 app.listen(process.env.PORT || 10000);
 
 async function startNajmBot() {
     const { state, saveCreds } = await useMultiFileAuthState('auth_info_najm');
+    
     const sock = makeWASocket({
         auth: state,
         logger: pino({ level: 'silent' }),
-        browser: ["Ubuntu", "Chrome", "20.0.04"] // ضروري لعمل كود الربط
+        browser: ["Ubuntu", "Chrome", "20.0.04"]
     });
 
-    // --- ميزة الربط بالرقم (Pairing Code) ---
-    // إذا لم تكن مسجلاً دخولك، سيطلب البوت كوداً لرقمك
+    // --- طلب كود الربط بأمان وبدون انهيار ---
     if (!sock.authState.creds.registered) {
-        const phoneNumber = process.env.PHONE_NUMBER; // سنضيف رقمك في Render
-        if (phoneNumber) {
+        let phone = process.env.PHONE_NUMBER;
+        if (phone) {
+            // تنظيف الرقم من أي مسافات أو أصفار زائدة في البداية
+            phone = phone.replace(/[^0-9]/g, ''); 
+            
+            console.log(`جارٍ طلب كود الربط للرقم: ${phone}...`);
+            
             setTimeout(async () => {
-                let code = await sock.requestPairingCode(phoneNumber);
-                console.log(`\n\n🚀 كود الربط الخاص بك هو: ${code}\n\n`);
-            }, 3000);
+                try {
+                    let code = await sock.requestPairingCode(phone);
+                    console.log(`\n\n************************************`);
+                    console.log(`🚀 كود الربط الخاص بك هو: ${code}`);
+                    console.log(`************************************\n\n`);
+                } catch (error) {
+                    console.error("فشل طلب الكود، سأحاول مرة أخرى عند إعادة التشغيل:", error.message);
+                }
+            }, 10000); // انتظر 10 ثوانٍ لضمان استقرار الاتصال
         }
     }
 
@@ -31,13 +42,14 @@ async function startNajmBot() {
     const model = genAI.getGenerativeModel({ model: "gemini-1.5-flash" });
 
     sock.ev.on('creds.update', saveCreds);
+
     sock.ev.on('connection.update', (update) => {
         const { connection, lastDisconnect } = update;
         if (connection === 'close') {
             const shouldReconnect = lastDisconnect.error?.output?.statusCode !== DisconnectReason.loggedOut;
             if (shouldReconnect) startNajmBot();
         } else if (connection === 'open') {
-            console.log('✅ تم الاتصال بنجاح!');
+            console.log('✅ متصل الآن! جرب إرسال رسالة لواتسابك.');
         }
     });
 
@@ -49,8 +61,9 @@ async function startNajmBot() {
             try {
                 const result = await model.generateContent(text);
                 await sock.sendMessage(msg.key.remoteJid, { text: result.response.text() });
-            } catch (e) { console.error(e); }
+            } catch (e) { console.error("Gemini Error:", e.message); }
         }
     });
 }
+
 startNajmBot();
