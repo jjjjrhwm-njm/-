@@ -4,12 +4,15 @@ const { default: makeWASocket, useMultiFileAuthState, DisconnectReason } = requi
 const { GoogleGenerativeAI } = require("@google/generative-ai");
 
 const app = express();
-app.get('/', (req, res) => res.send('Najm Bot is Stable ✅'));
+app.get('/', (req, res) => res.send('Najm Bot is Fixed! ✅'));
 app.listen(process.env.PORT || 10000);
 
+// قفل أمان عالمي يمنع التكرار نهائياً
+let pairingCodeRequested = false;
+
 async function startNajmBot() {
-    // استخدمنا مجلد جديد تماماً لضمان تنظيف البيانات القديمة
-    const { state, saveCreds } = await useMultiFileAuthState('session_najm_final');
+    // مجلد جديد لتنظيف الدوامة القديمة
+    const { state, saveCreds } = await useMultiFileAuthState('session_najm_v3');
     
     const sock = makeWASocket({
         auth: state,
@@ -17,40 +20,45 @@ async function startNajmBot() {
         browser: ["Ubuntu", "Chrome", "20.0.04"]
     });
 
-    // 1. طلب كود الربط (خارج الـ connection.update لتجنب التكرار)
-    if (!sock.authState.creds.registered) {
+    // طلب الكود مرة واحدة فقط في حياة السيرفر
+    if (!sock.authState.creds.registered && !pairingCodeRequested) {
+        pairingCodeRequested = true;
         let phone = process.env.PHONE_NUMBER;
         if (phone) {
             phone = phone.replace(/[^0-9]/g, '');
-            console.log(`\n🟡 هدوء تام... سأطلب كوداً واحداً فقط للرقم ${phone} بعد 10 ثوانٍ...`);
+            console.log(`\n🟡 نظام الأمان: سأطلب كوداً واحداً فقط للرقم ${phone}.. انتظر 15 ثانية..`);
             
             setTimeout(async () => {
                 try {
                     const code = await sock.requestPairingCode(phone);
                     console.log(`\n************************************`);
-                    console.log(`🚀 كود الربط الخاص بك هو: ${code}`);
+                    console.log(`🚀 كود الربط الثابت: ${code}`);
                     console.log(`************************************\n`);
                 } catch (err) {
-                    console.log("❌ فشل الطلب، أعد تشغيل السيرفر يدوياً.");
+                    console.log("❌ فشل الطلب، انتظر إعادة التشغيل التلقائي الهادئ.");
+                    pairingCodeRequested = false; 
                 }
-            }, 10000); 
+            }, 15000); 
         }
     }
 
     sock.ev.on('creds.update', saveCreds);
 
-    // 2. إدارة الاتصال (فقط لإعادة التشغيل عند الفصل)
     sock.ev.on('connection.update', (update) => {
         const { connection, lastDisconnect } = update;
         if (connection === 'close') {
             const shouldReconnect = lastDisconnect.error?.output?.statusCode !== DisconnectReason.loggedOut;
-            if (shouldReconnect) startNajmBot();
+            // إضافة تأخير 5 ثوانٍ عند إعادة التشغيل لمنع الدوامة
+            if (shouldReconnect) {
+                console.log("🔴 الاتصال مغلق، سأحاول مجدداً بعد 5 ثوانٍ...");
+                setTimeout(() => startNajmBot(), 5000);
+            }
         } else if (connection === 'open') {
-            console.log('✅ تم الربط! البوت جاهز للعمل.');
+            console.log('✅ تم الاتصال بنجاح!');
+            pairingCodeRequested = false; // تصفير القفل عند النجاح
         }
     });
 
-    // 3. محرك Gemini (الرد الآلي)
     sock.ev.on('messages.upsert', async m => {
         const msg = m.messages[0];
         if (!msg.message || msg.key.fromMe) return;
